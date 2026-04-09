@@ -1,0 +1,62 @@
+{
+  "description": "Example DynamoDB config items for the ai-connector config table (cali-{ENV}-ai-connector-config). Each item is a separate put-item call. Only 'configId' is required — all other fields are optional overrides.",
+
+  "configs": {
+    "default": {
+      "_comment": "Shared baseline — all named configs inherit from this. AWS CLI: aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '<json>'",
+      "configId": { "S": "default" },
+      "region": { "S": "us-east-1" },
+      "modelId": { "S": "anthropic.claude-sonnet-4-20250514-v1:0" },
+      "temperature": { "N": "0.7" },
+      "maxTokens": { "N": "1024" },
+      "topP": { "N": "1.0" },
+      "promptCaching": { "BOOL": true }
+    },
+
+    "voice-prod": {
+      "_comment": "Production voice calls — lower temperature for consistency, higher token limit. URL: https://<function-url>/?config=voice-prod",
+      "configId": { "S": "voice-prod" },
+      "temperature": { "N": "0.3" },
+      "maxTokens": { "N": "2048" }
+    },
+
+    "voice-test": {
+      "_comment": "Test voice calls — use a cheaper/faster model. URL: https://<function-url>/?config=voice-test",
+      "configId": { "S": "voice-test" },
+      "modelId": { "S": "anthropic.claude-haiku-4-5-20251001-v1:0" },
+      "temperature": { "N": "0.5" },
+      "maxTokens": { "N": "512" }
+    },
+
+    "chat": {
+      "_comment": "Chat use case — higher temperature for creative responses, larger output. URL: https://<function-url>/?config=chat",
+      "configId": { "S": "chat" },
+      "temperature": { "N": "0.9" },
+      "maxTokens": { "N": "4096" },
+      "topP": { "N": "0.95" }
+    },
+
+    "dev": {
+      "_comment": "Development — disable caching for fast prompt iteration. URL: https://<function-url>/?config=dev",
+      "configId": { "S": "dev" },
+      "modelId": { "S": "anthropic.claude-haiku-4-5-20251001-v1:0" },
+      "promptCaching": { "BOOL": false }
+    }
+  },
+
+  "aws_cli_examples": {
+    "put_default": "aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '{\"configId\":{\"S\":\"default\"},\"modelId\":{\"S\":\"anthropic.claude-sonnet-4-20250514-v1:0\"},\"temperature\":{\"N\":\"0.7\"},\"maxTokens\":{\"N\":\"1024\"},\"topP\":{\"N\":\"1.0\"},\"promptCaching\":{\"BOOL\":true}}'",
+    "put_voice_prod": "aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '{\"configId\":{\"S\":\"voice-prod\"},\"temperature\":{\"N\":\"0.3\"},\"maxTokens\":{\"N\":\"2048\"}}'",
+    "put_chat": "aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '{\"configId\":{\"S\":\"chat\"},\"temperature\":{\"N\":\"0.9\"},\"maxTokens\":{\"N\":\"4096\"},\"topP\":{\"N\":\"0.95\"}}'",
+    "read_config": "aws dynamodb get-item --table-name cali-prod-ai-connector-config --key '{\"configId\":{\"S\":\"default\"}}'",
+    "delete_config": "aws dynamodb delete-item --table-name cali-prod-ai-connector-config --key '{\"configId\":{\"S\":\"voice-test\"}}'"
+  },
+
+  "resolution_example": {
+    "_comment": "For ?config=voice-prod, resolution is: hardcoded defaults -> env vars -> DynamoDB 'default' -> DynamoDB 'voice-prod' -> per-request params",
+    "hardcoded": { "region": "us-east-1", "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "temperature": 0.7, "maxTokens": 1024, "topP": 1.0, "promptCaching": false },
+    "after_env_vars": { "region": "us-east-1", "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "temperature": 0.7, "maxTokens": 1024, "topP": 1.0, "promptCaching": true },
+    "after_default_dynamo": { "region": "us-east-1", "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "temperature": 0.7, "maxTokens": 1024, "topP": 1.0, "promptCaching": true },
+    "after_voice_prod_dynamo": { "region": "us-east-1", "modelId": "anthropic.claude-sonnet-4-20250514-v1:0", "temperature": 0.3, "maxTokens": 2048, "topP": 1.0, "promptCaching": true }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "configId": "default",
+  "region": "eu-central-1",
+  "modelId": "eu.mistral.pixtral-large-2502-v1:0",
+  "temperature": 0.7,
+  "maxTokens": 1024,
+  "topP": 1.0,
+  "promptCaching": true
+}
