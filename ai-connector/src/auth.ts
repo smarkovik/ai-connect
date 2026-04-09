@@ -206,14 +206,14 @@ export async function validateAuth(
   const token = parts[1];
 
   // ─── Try static API key first (fast path for service-to-service) ────
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.AI_CONNECTOR_API_KEY;
   if (apiKey && token === apiKey) {
     return { ok: true, identity: null };
   }
 
   // ─── Try Cognito JWT ────────────────────────────────────────────────
-  const userPoolId = process.env.COGNITO_USER_POOL_ID;
-  const region = process.env.DEFAULT_REGION || "eu-central-1";
+  const userPoolId = process.env.AI_CONNECTOR_COGNITO_POOL_ID;
+  const region = process.env.AI_CONNECTOR_AWS_REGION || "eu-central-1";
 
   if (!userPoolId) {
     // No Cognito configured — reject if API key didn't match

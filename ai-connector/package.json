@@ -13,7 +13,7 @@
     "package": "npm install && npm run build && npm install --omit=dev && cp -r node_modules dist/ && mkdir -p release && cd dist && zip -r ../release/ai-connector-$(node -p \"require('../package.json').version\").zip ."
   },
   "keywords": [],
-  "author": "Callifly",
+  "author": "",
   "license": "ISC",
   "description": "OpenAI-compatible Bedrock proxy for custom LLM integration",
   "devDependencies": {

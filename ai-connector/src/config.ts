@@ -9,8 +9,8 @@ import {
  *
  * Resolution order (highest priority first):
  *   1. Per-request `model` field (if it looks like a Bedrock model ID)
- *   2. DynamoDB runtime config (table: cali-{ENV_NAME}-ai-connector-config, key: "default")
- *   3. Environment variables (BEDROCK_MODEL, BEDROCK_REGION)
+ *   2. DynamoDB runtime config (table: {AI_CONNECTOR_ENV_NAME}-ai-connector-config, key: "default")
+ *   3. Environment variables (AI_CONNECTOR_BEDROCK_MODEL, AI_CONNECTOR_BEDROCK_REGION)
  *   4. Hardcoded defaults below
  */
 export interface BedrockConfig {
@@ -72,10 +72,12 @@ export async function getBedrockConfig(
   const config: BedrockConfig = { ...DEFAULT_BEDROCK_CONFIG };
 
   // Layer 2: Override with env vars (deploy-time)
-  if (process.env.BEDROCK_REGION) config.region = process.env.BEDROCK_REGION;
-  if (process.env.BEDROCK_MODEL) config.modelId = process.env.BEDROCK_MODEL;
-  if (process.env.PROMPT_CACHING_ENABLED !== undefined)
-    config.promptCaching = process.env.PROMPT_CACHING_ENABLED === "true";
+  if (process.env.AI_CONNECTOR_BEDROCK_REGION)
+    config.region = process.env.AI_CONNECTOR_BEDROCK_REGION;
+  if (process.env.AI_CONNECTOR_BEDROCK_MODEL)
+    config.modelId = process.env.AI_CONNECTOR_BEDROCK_MODEL;
+  if (process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED !== undefined)
+    config.promptCaching = process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED === "true";
 
   // Layer 3: Override with DynamoDB "default" config
   const defaultOverrides = await loadDynamoConfig("default");
@@ -120,7 +122,7 @@ let docClient: DynamoDBDocumentClient | null = null;
 function getDocClient(): DynamoDBDocumentClient {
   if (!docClient) {
     const client = new DynamoDBClient({
-      region: process.env.DEFAULT_REGION || "eu-central-1",
+      region: process.env.AI_CONNECTOR_AWS_REGION || "eu-central-1",
     });
     docClient = DynamoDBDocumentClient.from(client);
   }
@@ -128,14 +130,15 @@ function getDocClient(): DynamoDBDocumentClient {
 }
 
 function getTableName(): string | undefined {
-  const env = process.env.ENV_NAME;
+  const env = process.env.AI_CONNECTOR_ENV_NAME;
   if (!env) return undefined;
-  return `cali-${env}-ai-connector-config`;
+  return `${env}-ai-connector-config`;
 }
 
 /**
  * Loads runtime config overrides from DynamoDB.
  * Returns null if the table is not configured or the item doesn't exist.
+ * Logs (but does not throw) on unexpected errors so the request can continue.
  */
 async function loadDynamoConfig(
   configId: string
@@ -161,8 +164,13 @@ async function loadDynamoConfig(
       topP: result.Item.topP,
       promptCaching: result.Item.promptCaching,
     };
-  } catch {
-    // DynamoDB table may not exist yet — fall back silently
+  } catch (err) {
+    // Log unexpected errors (permissions, network, missing table) without
+    // breaking the request — config will fall back to env vars and defaults.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[ai-connector] DynamoDB config load failed for "${configId}" in "${tableName}": ${message}`
+    );
     return null;
   }
 }

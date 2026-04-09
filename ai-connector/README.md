@@ -46,17 +46,20 @@ Set in Terraform (`infrastructure/ai-connector-lambda.tf`) and applied when the 
 
 | Variable | Overrides | Example |
 |----------|-----------|---------|
-| `BEDROCK_REGION` | `region` | `eu-west-1` |
-| `BEDROCK_MODEL` | `modelId` | `anthropic.claude-haiku-4-5-20251001-v1:0` |
-| `PROMPT_CACHING_ENABLED` | `promptCaching` | `true` or `false` |
-| `API_KEY` | — | Bearer token for client auth |
-| `ENV_NAME` | — | Environment name (enables DynamoDB config) |
+| `AI_CONNECTOR_BEDROCK_REGION` | `region` | `eu-west-1` |
+| `AI_CONNECTOR_BEDROCK_MODEL` | `modelId` | `anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `AI_CONNECTOR_PROMPT_CACHING_ENABLED` | `promptCaching` | `true` or `false` |
+| `AI_CONNECTOR_API_KEY` | — | Bearer token for client auth |
+| `AI_CONNECTOR_ENV_NAME` | — | Environment name (enables DynamoDB config) |
+| `AI_CONNECTOR_AWS_REGION` | — | AWS region for DynamoDB client (defaults to `eu-central-1`) |
+| `AI_CONNECTOR_COGNITO_POOL_ID` | — | Cognito User Pool ID for JWT auth (optional) |
+| `AI_CONNECTOR_ERROR_SLACK_CHANNEL` | — | Slack webhook URL for error reporting (optional) |
 
 To change these, update your `.tfvars` and run `terraform apply`. The Lambda must be redeployed.
 
 ### Layer 3: DynamoDB Runtime Config (Hot-Reload)
 
-**Table**: `cali-{ENV_NAME}-ai-connector-config`
+**Table**: `{AI_CONNECTOR_ENV_NAME}-ai-connector-config`
 **Key**: `configId = "default"`
 
 This is the recommended way to tune LLM parameters without redeploying. Changes take effect within 5 minutes (cache TTL).
@@ -66,7 +69,7 @@ This is the recommended way to tune LLM parameters without redeploying. Changes 
 ```bash
 # Set all parameters
 aws dynamodb put-item \
-  --table-name cali-prod-ai-connector-config \
+  --table-name prod-ai-connector-config \
   --item '{
     "configId": {"S": "default"},
     "region": {"S": "us-east-1"},
@@ -78,7 +81,7 @@ aws dynamodb put-item \
 
 # Or just override specific values (others keep their env/default values)
 aws dynamodb put-item \
-  --table-name cali-prod-ai-connector-config \
+  --table-name prod-ai-connector-config \
   --item '{
     "configId": {"S": "default"},
     "temperature": {"N": "0.3"},
@@ -117,7 +120,7 @@ Named configs are **layered on top of the default config**. Any field not set in
 ```bash
 # Default config — shared baseline
 aws dynamodb put-item \
-  --table-name cali-prod-ai-connector-config \
+  --table-name prod-ai-connector-config \
   --item '{
     "configId": {"S": "default"},
     "modelId": {"S": "anthropic.claude-sonnet-4-20250514-v1:0"},
@@ -127,7 +130,7 @@ aws dynamodb put-item \
 
 # Voice-prod — lower temperature, higher token limit
 aws dynamodb put-item \
-  --table-name cali-prod-ai-connector-config \
+  --table-name prod-ai-connector-config \
   --item '{
     "configId": {"S": "voice-prod"},
     "temperature": {"N": "0.3"},
@@ -136,7 +139,7 @@ aws dynamodb put-item \
 
 # Chat — higher temperature for more creative responses
 aws dynamodb put-item \
-  --table-name cali-prod-ai-connector-config \
+  --table-name prod-ai-connector-config \
   --item '{
     "configId": {"S": "chat"},
     "temperature": {"N": "0.9"}
@@ -194,7 +197,7 @@ Cache usage is reported in the response `usage` object:
 To toggle at runtime via DynamoDB:
 ```bash
 aws dynamodb put-item \
-  --table-name cali-prod-ai-connector-config \
+  --table-name prod-ai-connector-config \
   --item '{
     "configId": {"S": "default"},
     "promptCaching": {"BOOL": false}
@@ -271,9 +274,10 @@ npm run package   # Creates release/ai-connector-latest.zip for S3
 
 2. **Set Terraform variables** in your `.tfvars`:
    ```hcl
-   ai_connector_api_key        = "your-secure-random-key"
-   ai_connector_bedrock_region = "us-east-1"
-   ai_connector_bedrock_model  = "anthropic.claude-sonnet-4-20250514-v1:0"
+   ai_connector_api_key              = "your-secure-random-key"
+   ai_connector_bedrock_region       = "us-east-1"
+   ai_connector_bedrock_model        = "anthropic.claude-sonnet-4-20250514-v1:0"
+   ai_connector_prompt_caching       = true
    ```
 
 3. **Apply Terraform**: `terraform apply`

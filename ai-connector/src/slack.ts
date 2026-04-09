@@ -9,8 +9,8 @@
 
 import { reportToSlack } from "@callifly/common";
 
-const ERROR_SLACK_CHANNEL = process.env.ERROR_SLACK_CHANNEL;
-const ENV_NAME = process.env.ENV_NAME || "unknown";
+const ERROR_SLACK_CHANNEL = process.env.AI_CONNECTOR_ERROR_SLACK_CHANNEL;
+const ENV_NAME = process.env.AI_CONNECTOR_ENV_NAME || "unknown";
 
 export interface ErrorContext {
   /** The operation being performed when the error occurred */

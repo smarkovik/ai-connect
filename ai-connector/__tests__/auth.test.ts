@@ -4,14 +4,14 @@ describe("validateAuth", () => {
   const VALID_KEY = "test-secret-key-123";
 
   beforeEach(() => {
-    process.env.API_KEY = VALID_KEY;
+    process.env.AI_CONNECTOR_API_KEY = VALID_KEY;
     // No Cognito configured — tests focus on the static API key path
-    delete process.env.COGNITO_USER_POOL_ID;
+    delete process.env.AI_CONNECTOR_COGNITO_POOL_ID;
   });
 
   afterEach(() => {
-    delete process.env.API_KEY;
-    delete process.env.COGNITO_USER_POOL_ID;
+    delete process.env.AI_CONNECTOR_API_KEY;
+    delete process.env.AI_CONNECTOR_COGNITO_POOL_ID;
   });
 
   it("returns ok with null identity for a valid static API key", async () => {
@@ -51,8 +51,8 @@ describe("validateAuth", () => {
     });
   });
 
-  it("returns 403 error when API_KEY env var is not set and no Cognito configured", async () => {
-    delete process.env.API_KEY;
+  it("returns 403 error when AI_CONNECTOR_API_KEY env var is not set and no Cognito configured", async () => {
+    delete process.env.AI_CONNECTOR_API_KEY;
     const result = await validateAuth(`Bearer ${VALID_KEY}`);
     expect(result).toEqual({
       ok: false,

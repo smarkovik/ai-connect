@@ -14,9 +14,7 @@ import { invokeBedrockStream } from "./bedrock-client";
 import { getBedrockConfig } from "./config";
 import { reportErrorToSlack } from "./slack";
 import type { ChatCompletionRequest } from "./types/openai";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type StreamEvent = any;
+import type { ConverseStreamOutput } from "@aws-sdk/client-bedrock-runtime";
 
 export interface HandlerRequest {
   method: string;
@@ -44,7 +42,7 @@ export interface StreamWriter {
  */
 export type PrepareResult =
   | { ok: false; response: HandlerResponse }
-  | { ok: true; stream: AsyncIterable<StreamEvent>; modelId: string; isStreaming: boolean };
+  | { ok: true; stream: AsyncIterable<ConverseStreamOutput>; modelId: string; isStreaming: boolean };
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -58,6 +56,30 @@ export const SSE_HEADERS = {
   Connection: "keep-alive",
   ...CORS_HEADERS,
 };
+
+/** Max length for ?config= query param values. */
+const CONFIG_NAME_MAX_LEN = 64;
+const CONFIG_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Validates that the parsed body is a well-formed ChatCompletionRequest.
+ * Returns a descriptive error string on failure, or null on success.
+ */
+function validateChatCompletionRequest(
+  parsed: unknown
+): string | null {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return "Request body must be a JSON object";
+  }
+  const req = parsed as Record<string, unknown>;
+  if (typeof req.model !== "string" || !req.model.trim()) {
+    return "Missing or empty required field: model";
+  }
+  if (!Array.isArray(req.messages) || req.messages.length === 0) {
+    return "Missing or empty required field: messages";
+  }
+  return null;
+}
 
 /**
  * Phase 1: Validate auth, config, model, and invoke Bedrock.
@@ -87,13 +109,27 @@ export async function prepareRequest(
     return { ok: false, response: errorResponse(405, "Method not allowed") };
   }
 
-  // Validate config name
-  if (req.configName && !/^[a-zA-Z0-9_-]+$/.test(req.configName)) {
-    return { ok: false, response: errorResponse(400, "Invalid config name") };
+  // Validate config name — must be alphanumeric/hyphen/underscore, max 64 chars
+  if (req.configName !== undefined) {
+    if (req.configName.length > CONFIG_NAME_MAX_LEN || !CONFIG_NAME_REGEX.test(req.configName)) {
+      return { ok: false, response: errorResponse(400, "Invalid config name") };
+    }
+  }
+
+  // Parse and validate request body — JSON errors are client errors (400)
+  let openaiRequest: ChatCompletionRequest;
+  try {
+    const parsed: unknown = JSON.parse(req.body);
+    const validationError = validateChatCompletionRequest(parsed);
+    if (validationError) {
+      return { ok: false, response: errorResponse(400, validationError) };
+    }
+    openaiRequest = parsed as ChatCompletionRequest;
+  } catch {
+    return { ok: false, response: errorResponse(400, "Invalid JSON in request body") };
   }
 
   try {
-    const openaiRequest: ChatCompletionRequest = JSON.parse(req.body);
     const config = await getBedrockConfig(req.configName);
 
     const modelId = resolveModelId(openaiRequest.model, config.modelId);
@@ -147,70 +183,69 @@ export async function handleRequest(
   return handleNonStreaming(result.stream, result.modelId);
 }
 
+// ─── Shared SSE stream processor ────────────────────────────────────────────
+
+/**
+ * Drives both real-time streaming and buffered SSE paths.
+ * Calls onChunk for each formatted SSE data line (including [DONE]).
+ * Catches mid-stream errors and emits an error chunk before [DONE].
+ */
+async function processSSEStream(
+  stream: AsyncIterable<ConverseStreamOutput>,
+  params: { id: string; model: string },
+  onChunk: (data: string) => void
+): Promise<void> {
+  try {
+    for await (const event of stream) {
+      if (event.messageStart) {
+        onChunk(formatSSEChunk(createInitialChunk(params)));
+      } else if (event.contentBlockStart) {
+        const cbStart = {
+          contentBlockIndex: event.contentBlockStart.contentBlockIndex ?? 0,
+          start: (event.contentBlockStart.start ?? {}) as Record<string, unknown>,
+        };
+        const chunk = translateContentBlockStart(cbStart, params);
+        if (chunk) onChunk(formatSSEChunk(chunk));
+      } else if (event.contentBlockDelta) {
+        const cbDelta = {
+          contentBlockIndex: event.contentBlockDelta.contentBlockIndex ?? 0,
+          delta: (event.contentBlockDelta.delta ?? {}) as Record<string, unknown>,
+        };
+        onChunk(formatSSEChunk(translateContentBlockDelta(cbDelta, params)));
+      } else if (event.messageStop) {
+        onChunk(formatSSEChunk(translateMessageStop(event.messageStop.stopReason ?? "", params)));
+      } else if (event.metadata) {
+        onChunk(formatSSEChunk(translateMetadata(
+          event.metadata as { usage?: BedrockUsage },
+          params
+        )));
+      }
+      // contentBlockStop is intentionally skipped — no OpenAI equivalent
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Stream error";
+    reportErrorToSlack({
+      operation: "processSSEStream",
+      error: message,
+      model: params.model,
+    }).catch(() => {});
+    onChunk(buildMidStreamErrorChunk(message, params));
+  }
+
+  onChunk(formatSSEChunk(null)); // [DONE]
+}
+
 /**
  * Phase 2 (real-time): Pipe SSE chunks from the Bedrock stream directly
  * to a StreamWriter. Caller must have already set SSE response metadata.
  */
 export async function pipeStreamToWriter(
-  stream: AsyncIterable<StreamEvent>,
+  stream: AsyncIterable<ConverseStreamOutput>,
   model: string,
   writer: StreamWriter
 ): Promise<void> {
-  const id = generateChunkId();
-  const params = { id, model };
-
-  try {
-    for await (const event of stream) {
-      if (event.messageStart) {
-        writer.write(formatSSEChunk(createInitialChunk(params)));
-      } else if (event.contentBlockStart) {
-        const cbStart = event.contentBlockStart as {
-          contentBlockIndex: number;
-          start: Record<string, unknown>;
-        };
-        const chunk = translateContentBlockStart(cbStart, params);
-        if (chunk) writer.write(formatSSEChunk(chunk));
-      } else if (event.contentBlockDelta) {
-        const cbDelta = event.contentBlockDelta as {
-          contentBlockIndex: number;
-          delta: Record<string, unknown>;
-        };
-        writer.write(formatSSEChunk(translateContentBlockDelta(cbDelta, params)));
-      } else if (event.contentBlockStop) {
-        // Bedrock signals end of a content block — no OpenAI equivalent needed
-      } else if (event.messageStop) {
-        const stop = event.messageStop as { stopReason: string };
-        writer.write(formatSSEChunk(translateMessageStop(stop.stopReason, params)));
-      } else if (event.metadata) {
-        const meta = event.metadata as { usage?: BedrockUsage };
-        writer.write(formatSSEChunk(translateMetadata(meta, params)));
-      }
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Stream error";
-    reportErrorToSlack({
-      operation: "pipeStreamToWriter",
-      error: message,
-      model,
-    }).catch(() => {});
-    const errorChunk = {
-      id: params.id,
-      object: "chat.completion.chunk" as const,
-      created: Math.floor(Date.now() / 1000),
-      model: params.model,
-      choices: [
-        {
-          index: 0,
-          delta: {},
-          finish_reason: "stop" as const,
-        },
-      ],
-      error: { message, type: "server_error" },
-    };
-    writer.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
-  }
-
-  writer.write(formatSSEChunk(null)); // [DONE]
+  const params = { id: generateChunkId(), model };
+  await processSSEStream(stream, params, (chunk) => writer.write(chunk));
 }
 
 /**
@@ -218,70 +253,12 @@ export async function pipeStreamToWriter(
  * Used by handleRequest (test / legacy path).
  */
 async function handleStreamingBuffered(
-  stream: AsyncIterable<StreamEvent>,
+  stream: AsyncIterable<ConverseStreamOutput>,
   model: string
 ): Promise<HandlerResponse> {
-  const id = generateChunkId();
-  const params = { id, model };
+  const params = { id: generateChunkId(), model };
   const chunks: string[] = [];
-
-  try {
-    for await (const event of stream) {
-      if (event.messageStart) {
-        chunks.push(formatSSEChunk(createInitialChunk(params)));
-      } else if (event.contentBlockStart) {
-        const cbStart = event.contentBlockStart as {
-          contentBlockIndex: number;
-          start: Record<string, unknown>;
-        };
-        const chunk = translateContentBlockStart(cbStart, params);
-        if (chunk) chunks.push(formatSSEChunk(chunk));
-      } else if (event.contentBlockDelta) {
-        const cbDelta = event.contentBlockDelta as {
-          contentBlockIndex: number;
-          delta: Record<string, unknown>;
-        };
-        chunks.push(
-          formatSSEChunk(translateContentBlockDelta(cbDelta, params))
-        );
-      } else if (event.contentBlockStop) {
-        // Bedrock signals end of a content block — no OpenAI equivalent needed
-      } else if (event.messageStop) {
-        const stop = event.messageStop as { stopReason: string };
-        chunks.push(
-          formatSSEChunk(translateMessageStop(stop.stopReason, params))
-        );
-      } else if (event.metadata) {
-        const meta = event.metadata as { usage?: BedrockUsage };
-        chunks.push(formatSSEChunk(translateMetadata(meta, params)));
-      }
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Stream error";
-    reportErrorToSlack({
-      operation: "handleStreamingBuffered",
-      error: message,
-      model,
-    }).catch(() => {});
-    const errorChunk = {
-      id: params.id,
-      object: "chat.completion.chunk" as const,
-      created: Math.floor(Date.now() / 1000),
-      model: params.model,
-      choices: [
-        {
-          index: 0,
-          delta: {},
-          finish_reason: "stop" as const,
-        },
-      ],
-      error: { message, type: "server_error" },
-    };
-    chunks.push(`data: ${JSON.stringify(errorChunk)}\n\n`);
-  }
-
-  chunks.push(formatSSEChunk(null)); // [DONE]
-
+  await processSSEStream(stream, params, (chunk) => chunks.push(chunk));
   return {
     statusCode: 200,
     headers: SSE_HEADERS,
@@ -295,63 +272,62 @@ interface ToolCallAccumulator {
   arguments: string;
 }
 
+interface OpenAIUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: { cached_tokens: number };
+  cache_write_input_tokens?: number;
+}
+
 async function handleNonStreaming(
-  stream: AsyncIterable<StreamEvent>,
+  stream: AsyncIterable<ConverseStreamOutput>,
   model: string
 ): Promise<HandlerResponse> {
   let content = "";
   let finishReason: "stop" | "tool_calls" | "length" = "stop";
-  let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  let usage: OpenAIUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const toolCalls: Map<number, ToolCallAccumulator> = new Map();
 
   for await (const event of stream) {
     if (event.contentBlockStart) {
-      const cbStart = event.contentBlockStart as {
-        contentBlockIndex: number;
-        start: { toolUse?: { toolUseId: string; name: string } };
-      };
-      if (cbStart.start.toolUse) {
-        toolCalls.set(cbStart.contentBlockIndex, {
-          id: cbStart.start.toolUse.toolUseId,
-          name: cbStart.start.toolUse.name,
+      const toolUse = event.contentBlockStart.start?.toolUse;
+      if (toolUse) {
+        toolCalls.set(event.contentBlockStart.contentBlockIndex ?? 0, {
+          id: toolUse.toolUseId ?? "",
+          name: toolUse.name ?? "",
           arguments: "",
         });
       }
     } else if (event.contentBlockDelta) {
-      const cbDelta = event.contentBlockDelta as {
-        contentBlockIndex: number;
-        delta: { text?: string; toolUse?: { input: string } };
-      };
-      if (cbDelta.delta.text) {
-        content += cbDelta.delta.text;
+      const delta = event.contentBlockDelta.delta;
+      if (delta && "text" in delta && typeof delta.text === "string") {
+        content += delta.text;
       }
-      if (cbDelta.delta.toolUse) {
-        const tc = toolCalls.get(cbDelta.contentBlockIndex);
+      if (delta && "toolUse" in delta && delta.toolUse) {
+        const tc = toolCalls.get(event.contentBlockDelta.contentBlockIndex ?? 0);
         if (tc) {
-          tc.arguments += cbDelta.delta.toolUse.input;
+          tc.arguments += (delta.toolUse as { input: string }).input ?? "";
         }
       }
     } else if (event.messageStop) {
-      const stop = event.messageStop as { stopReason: string };
-      finishReason = mapStopReason(stop.stopReason);
+      finishReason = mapStopReason(event.messageStop.stopReason ?? "");
     } else if (event.metadata) {
       const meta = event.metadata as { usage?: BedrockUsage };
       if (meta.usage) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const u: any = {
+        usage = {
           prompt_tokens: meta.usage.inputTokens,
           completion_tokens: meta.usage.outputTokens,
           total_tokens: meta.usage.totalTokens,
         };
         if (meta.usage.cacheReadInputTokens !== undefined) {
-          u.prompt_tokens_details = {
+          usage.prompt_tokens_details = {
             cached_tokens: meta.usage.cacheReadInputTokens,
           };
         }
         if (meta.usage.cacheWriteInputTokens !== undefined) {
-          u.cache_write_input_tokens = meta.usage.cacheWriteInputTokens;
+          usage.cache_write_input_tokens = meta.usage.cacheWriteInputTokens;
         }
-        usage = u;
       }
     }
   }
@@ -392,6 +368,27 @@ async function handleNonStreaming(
     },
     body: JSON.stringify(response),
   };
+}
+
+function buildMidStreamErrorChunk(
+  message: string,
+  params: { id: string; model: string }
+): string {
+  const chunk = {
+    id: params.id,
+    object: "chat.completion.chunk" as const,
+    created: Math.floor(Date.now() / 1000),
+    model: params.model,
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: "stop" as const,
+      },
+    ],
+    error: { message, type: "server_error", code: "500" },
+  };
+  return `data: ${JSON.stringify(chunk)}\n\n`;
 }
 
 function resolveModelId(requestModel: string, defaultModelId: string): string {

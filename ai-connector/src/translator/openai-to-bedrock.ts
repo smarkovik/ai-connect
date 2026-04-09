@@ -164,6 +164,9 @@ function translateMessageContent(
       try {
         input = JSON.parse(tc.function.arguments);
       } catch {
+        console.warn(
+          `[ai-connector] Malformed tool arguments for "${tc.function.name}" — using empty object`
+        );
         input = {};
       }
       blocks.push({

@@ -17,15 +17,15 @@ function mockStream(events: Record<string, unknown>[]): any {
 
 beforeEach(() => {
   bedrockMock.reset();
-  process.env.API_KEY = "test-key";
-  process.env.BEDROCK_REGION = "us-east-1";
-  process.env.BEDROCK_MODEL = "anthropic.claude-sonnet-4-20250514-v1:0";
+  process.env.AI_CONNECTOR_API_KEY = "test-key";
+  process.env.AI_CONNECTOR_BEDROCK_REGION = "us-east-1";
+  process.env.AI_CONNECTOR_BEDROCK_MODEL = "anthropic.claude-sonnet-4-20250514-v1:0";
 });
 
 afterEach(() => {
-  delete process.env.API_KEY;
-  delete process.env.BEDROCK_REGION;
-  delete process.env.BEDROCK_MODEL;
+  delete process.env.AI_CONNECTOR_API_KEY;
+  delete process.env.AI_CONNECTOR_BEDROCK_REGION;
+  delete process.env.AI_CONNECTOR_BEDROCK_MODEL;
 });
 
 function makeRequest(overrides: Record<string, unknown> = {}) {
@@ -91,6 +91,61 @@ describe("handleRequest", () => {
 
       expect(result.statusCode).toBe(200);
       expect(result.headers?.["Access-Control-Allow-Origin"]).toBe("*");
+    });
+  });
+
+  describe("input validation", () => {
+    it("returns 400 for invalid JSON body", async () => {
+      const result = await handleRequest({
+        method: "POST",
+        path: "/chat/completions",
+        headers: { authorization: "Bearer test-key" },
+        body: "not json{",
+      });
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body!);
+      expect(body.error.message).toContain("Invalid JSON");
+    });
+
+    it("returns 400 when model field is missing", async () => {
+      const result = await handleRequest({
+        method: "POST",
+        path: "/chat/completions",
+        headers: { authorization: "Bearer test-key" },
+        body: JSON.stringify({ messages: [{ role: "user", content: "Hi" }] }),
+      });
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body!);
+      expect(body.error.message).toContain("model");
+    });
+
+    it("returns 400 when messages array is missing", async () => {
+      const result = await handleRequest({
+        method: "POST",
+        path: "/chat/completions",
+        headers: { authorization: "Bearer test-key" },
+        body: JSON.stringify({ model: "anthropic.claude-sonnet-4-20250514-v1:0" }),
+      });
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body!);
+      expect(body.error.message).toContain("messages");
+    });
+
+    it("returns 400 when messages array is empty", async () => {
+      const result = await handleRequest({
+        method: "POST",
+        path: "/chat/completions",
+        headers: { authorization: "Bearer test-key" },
+        body: JSON.stringify({
+          model: "anthropic.claude-sonnet-4-20250514-v1:0",
+          messages: [],
+        }),
+      });
+
+      expect(result.statusCode).toBe(400);
     });
   });
 
@@ -265,7 +320,7 @@ describe("handleRequest", () => {
   });
 
   describe("model fallback", () => {
-    it("uses BEDROCK_MODEL env var when request model is generic", async () => {
+    it("uses AI_CONNECTOR_BEDROCK_MODEL env var when request model is generic", async () => {
       bedrockMock.on(ConverseStreamCommand).resolves({
         stream: mockStream([
           { messageStart: { role: "assistant" } },
@@ -341,6 +396,36 @@ describe("handleRequest", () => {
       expect(result.statusCode).toBe(400);
     });
 
+    it("rejects config names longer than 64 characters", async () => {
+      const req = {
+        ...makeRequest(),
+        configName: "a".repeat(65),
+      };
+      const result = await handleRequest(req);
+
+      expect(result.statusCode).toBe(400);
+      const body = JSON.parse(result.body!);
+      expect(body.error.message).toBe("Invalid config name");
+    });
+
+    it("accepts config names of exactly 64 characters", async () => {
+      bedrockMock.on(ConverseStreamCommand).resolves({
+        stream: mockStream([
+          { messageStart: { role: "assistant" } },
+          { messageStop: { stopReason: "end_turn" } },
+          { metadata: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } },
+        ]),
+      });
+
+      const req = {
+        ...makeRequest(),
+        configName: "a".repeat(64),
+      };
+      const result = await handleRequest(req);
+
+      expect(result.statusCode).toBe(200);
+    });
+
     it("allows undefined configName (uses default)", async () => {
       bedrockMock.on(ConverseStreamCommand).resolves({
         stream: mockStream([
@@ -380,16 +465,18 @@ describe("handleRequest", () => {
 
       // Body should contain partial content + error chunk + [DONE]
       const lines = result.body!.split("\n\n").filter((l) => l.startsWith("data: "));
-      const lastDataLine = lines[lines.length - 1];
 
       // Should end with [DONE]
       expect(result.body!.trim().endsWith("data: [DONE]")).toBe(true);
 
-      // Should contain an error chunk
+      // Should contain an error chunk with code field
       const hasError = lines.some((line) => {
         if (line === "data: [DONE]") return false;
         const parsed = JSON.parse(line.replace("data: ", ""));
-        return parsed.error?.message === "Connection reset";
+        return (
+          parsed.error?.message === "Connection reset" &&
+          parsed.error?.code === "500"
+        );
       });
       expect(hasError).toBe(true);
     });

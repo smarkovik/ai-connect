@@ -125,21 +125,17 @@ export function translateMetadata(
 ): ChatCompletionChunk {
   const chunk = buildChunk({}, null, params);
   if (metadata.usage) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const usage: any = {
+    chunk.usage = {
       prompt_tokens: metadata.usage.inputTokens,
       completion_tokens: metadata.usage.outputTokens,
       total_tokens: metadata.usage.totalTokens,
+      ...(metadata.usage.cacheReadInputTokens !== undefined && {
+        prompt_tokens_details: { cached_tokens: metadata.usage.cacheReadInputTokens },
+      }),
+      ...(metadata.usage.cacheWriteInputTokens !== undefined && {
+        cache_write_input_tokens: metadata.usage.cacheWriteInputTokens,
+      }),
     };
-    if (metadata.usage.cacheReadInputTokens !== undefined) {
-      usage.prompt_tokens_details = {
-        cached_tokens: metadata.usage.cacheReadInputTokens,
-      };
-    }
-    if (metadata.usage.cacheWriteInputTokens !== undefined) {
-      usage.cache_write_input_tokens = metadata.usage.cacheWriteInputTokens;
-    }
-    chunk.usage = usage;
   }
   return chunk;
 }

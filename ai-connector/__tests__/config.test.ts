@@ -12,19 +12,19 @@ beforeEach(() => {
   dynamoMock.reset();
   clearConfigCache();
   // Clear all env vars
-  delete process.env.BEDROCK_REGION;
-  delete process.env.BEDROCK_MODEL;
-  delete process.env.ENV_NAME;
-  delete process.env.DEFAULT_REGION;
-  delete process.env.PROMPT_CACHING_ENABLED;
+  delete process.env.AI_CONNECTOR_BEDROCK_REGION;
+  delete process.env.AI_CONNECTOR_BEDROCK_MODEL;
+  delete process.env.AI_CONNECTOR_ENV_NAME;
+  delete process.env.AI_CONNECTOR_AWS_REGION;
+  delete process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED;
 });
 
 afterEach(() => {
-  delete process.env.BEDROCK_REGION;
-  delete process.env.BEDROCK_MODEL;
-  delete process.env.ENV_NAME;
-  delete process.env.DEFAULT_REGION;
-  delete process.env.PROMPT_CACHING_ENABLED;
+  delete process.env.AI_CONNECTOR_BEDROCK_REGION;
+  delete process.env.AI_CONNECTOR_BEDROCK_MODEL;
+  delete process.env.AI_CONNECTOR_ENV_NAME;
+  delete process.env.AI_CONNECTOR_AWS_REGION;
+  delete process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED;
 });
 
 describe("DEFAULT_BEDROCK_CONFIG", () => {
@@ -43,7 +43,7 @@ describe("DEFAULT_BEDROCK_CONFIG", () => {
 describe("getBedrockConfig", () => {
   describe("with no overrides", () => {
     it("returns hardcoded defaults when no env vars or DynamoDB", async () => {
-      // No ENV_NAME = no DynamoDB table lookup
+      // No AI_CONNECTOR_ENV_NAME = no DynamoDB table lookup
       const config = await getBedrockConfig();
 
       expect(config.region).toBe("us-east-1");
@@ -57,8 +57,8 @@ describe("getBedrockConfig", () => {
 
   describe("env var overrides", () => {
     it("overrides region and model from env vars", async () => {
-      process.env.BEDROCK_REGION = "eu-west-1";
-      process.env.BEDROCK_MODEL = "anthropic.claude-haiku-4-5-20251001-v1:0";
+      process.env.AI_CONNECTOR_BEDROCK_REGION = "eu-west-1";
+      process.env.AI_CONNECTOR_BEDROCK_MODEL = "anthropic.claude-haiku-4-5-20251001-v1:0";
 
       const config = await getBedrockConfig();
 
@@ -69,16 +69,16 @@ describe("getBedrockConfig", () => {
       expect(config.maxTokens).toBe(1024);
     });
 
-    it("enables promptCaching via PROMPT_CACHING_ENABLED=true", async () => {
-      process.env.PROMPT_CACHING_ENABLED = "true";
+    it("enables promptCaching via AI_CONNECTOR_PROMPT_CACHING_ENABLED=true", async () => {
+      process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED = "true";
 
       const config = await getBedrockConfig();
 
       expect(config.promptCaching).toBe(true);
     });
 
-    it("keeps promptCaching off when PROMPT_CACHING_ENABLED=false", async () => {
-      process.env.PROMPT_CACHING_ENABLED = "false";
+    it("keeps promptCaching off when AI_CONNECTOR_PROMPT_CACHING_ENABLED=false", async () => {
+      process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED = "false";
 
       const config = await getBedrockConfig();
 
@@ -88,7 +88,7 @@ describe("getBedrockConfig", () => {
 
   describe("DynamoDB runtime overrides", () => {
     it("overrides all values from DynamoDB", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
       dynamoMock.on(GetCommand).resolves({
         Item: {
@@ -111,8 +111,8 @@ describe("getBedrockConfig", () => {
     });
 
     it("DynamoDB overrides take priority over env vars", async () => {
-      process.env.ENV_NAME = "dev";
-      process.env.BEDROCK_MODEL = "from-env-var";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_BEDROCK_MODEL = "from-env-var";
 
       dynamoMock.on(GetCommand).resolves({
         Item: {
@@ -127,8 +127,8 @@ describe("getBedrockConfig", () => {
     });
 
     it("DynamoDB can override promptCaching", async () => {
-      process.env.ENV_NAME = "dev";
-      process.env.PROMPT_CACHING_ENABLED = "true";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED = "true";
 
       dynamoMock.on(GetCommand).resolves({
         Item: {
@@ -143,8 +143,8 @@ describe("getBedrockConfig", () => {
     });
 
     it("partially overrides — missing DynamoDB fields keep env/default values", async () => {
-      process.env.ENV_NAME = "dev";
-      process.env.BEDROCK_REGION = "eu-west-1";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_BEDROCK_REGION = "eu-west-1";
 
       dynamoMock.on(GetCommand).resolves({
         Item: {
@@ -164,7 +164,7 @@ describe("getBedrockConfig", () => {
     });
 
     it("falls back silently when DynamoDB item doesn't exist", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
       dynamoMock.on(GetCommand).resolves({ Item: undefined });
 
@@ -175,21 +175,27 @@ describe("getBedrockConfig", () => {
       expect(config.modelId).toBe("anthropic.claude-sonnet-4-20250514-v1:0");
     });
 
-    it("falls back silently when DynamoDB call fails", async () => {
-      process.env.ENV_NAME = "dev";
+    it("logs an error and falls back to defaults when DynamoDB call fails", async () => {
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
+      const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
       dynamoMock.on(GetCommand).rejects(new Error("Table not found"));
 
       const config = await getBedrockConfig();
 
-      // All defaults
+      // Request continues — falls back to defaults
       expect(config.temperature).toBe(0.7);
+      // Error should have been logged (not silently swallowed)
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("DynamoDB config load failed")
+      );
+      errorSpy.mockRestore();
     });
   });
 
   describe("caching", () => {
     it("caches the result and does not re-query DynamoDB on second call", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
       dynamoMock.on(GetCommand).resolves({
         Item: { configId: "default", temperature: 0.2 },
@@ -205,7 +211,7 @@ describe("getBedrockConfig", () => {
     });
 
     it("re-queries after cache is cleared", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
       dynamoMock.on(GetCommand).resolves({
         Item: { configId: "default", temperature: 0.2 },
@@ -225,11 +231,11 @@ describe("getBedrockConfig", () => {
     });
 
     it("caches named configs independently from default", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "default" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "default" } })
         .resolves({ Item: { configId: "default", temperature: 0.7 } });
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "voice-prod" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "voice-prod" } })
         .resolves({ Item: { configId: "voice-prod", temperature: 0.3 } });
 
       const defaultConfig = await getBedrockConfig();
@@ -248,13 +254,13 @@ describe("getBedrockConfig", () => {
 
   describe("named configs", () => {
     it("loads a named config that overrides the default", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "default" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "default" } })
         .resolves({
           Item: { configId: "default", temperature: 0.7, maxTokens: 1024 },
         });
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "voice-prod" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "voice-prod" } })
         .resolves({
           Item: { configId: "voice-prod", temperature: 0.3, maxTokens: 2048 },
         });
@@ -268,13 +274,13 @@ describe("getBedrockConfig", () => {
     });
 
     it("named config partially overrides — inherits from default for missing fields", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "default" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "default" } })
         .resolves({
           Item: { configId: "default", modelId: "anthropic.claude-haiku-4-5-20251001-v1:0", temperature: 0.5 },
         });
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "chat" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "chat" } })
         .resolves({
           Item: { configId: "chat", temperature: 0.9 },
         });
@@ -290,13 +296,13 @@ describe("getBedrockConfig", () => {
     });
 
     it("falls back to default when named config does not exist in DynamoDB", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "default" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "default" } })
         .resolves({
           Item: { configId: "default", temperature: 0.5 },
         });
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "nonexistent" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "nonexistent" } })
         .resolves({ Item: undefined });
 
       const config = await getBedrockConfig("nonexistent");
@@ -306,7 +312,7 @@ describe("getBedrockConfig", () => {
     });
 
     it("treats undefined configName same as 'default'", async () => {
-      process.env.ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
 
       dynamoMock.on(GetCommand).resolves({
         Item: { configId: "default", temperature: 0.4 },
@@ -321,12 +327,12 @@ describe("getBedrockConfig", () => {
     });
 
     it("named config can override promptCaching from default", async () => {
-      process.env.ENV_NAME = "dev";
-      process.env.PROMPT_CACHING_ENABLED = "true";
+      process.env.AI_CONNECTOR_ENV_NAME = "dev";
+      process.env.AI_CONNECTOR_PROMPT_CACHING_ENABLED = "true";
 
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "default" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "default" } })
         .resolves({ Item: undefined });
-      dynamoMock.on(GetCommand, { TableName: "cali-dev-ai-connector-config", Key: { configId: "dev" } })
+      dynamoMock.on(GetCommand, { TableName: "dev-ai-connector-config", Key: { configId: "dev" } })
         .resolves({
           Item: { configId: "dev", promptCaching: false },
         });

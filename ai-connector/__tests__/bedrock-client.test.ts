@@ -10,11 +10,11 @@ const bedrockMock = mockClient(BedrockRuntimeClient);
 describe("invokeBedrockStream", () => {
   beforeEach(() => {
     bedrockMock.reset();
-    process.env.BEDROCK_REGION = "us-east-1";
+    process.env.AI_CONNECTOR_BEDROCK_REGION = "us-east-1";
   });
 
   afterEach(() => {
-    delete process.env.BEDROCK_REGION;
+    delete process.env.AI_CONNECTOR_BEDROCK_REGION;
   });
 
   it("sends a ConverseStreamCommand with the provided input", async () => {

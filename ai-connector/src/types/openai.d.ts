@@ -47,6 +47,8 @@ export interface ChatCompletionChunk {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    prompt_tokens_details?: { cached_tokens: number };
+    cache_write_input_tokens?: number;
   } | null;
 }
 
