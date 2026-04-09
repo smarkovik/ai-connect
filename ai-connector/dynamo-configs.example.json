@@ -1,9 +1,9 @@
 {
-  "description": "Example DynamoDB config items for the ai-connector config table (cali-{ENV}-ai-connector-config). Each item is a separate put-item call. Only 'configId' is required — all other fields are optional overrides.",
+  "description": "Example DynamoDB config items for the ai-connector config table ({AI_CONNECTOR_ENV_NAME}-ai-connector-config). Each item is a separate put-item call. Only 'configId' is required — all other fields are optional overrides.",
 
   "configs": {
     "default": {
-      "_comment": "Shared baseline — all named configs inherit from this. AWS CLI: aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '<json>'",
+      "_comment": "Shared baseline — all named configs inherit from this. AWS CLI: aws dynamodb put-item --table-name prod-ai-connector-config --item '<json>'",
       "configId": { "S": "default" },
       "region": { "S": "us-east-1" },
       "modelId": { "S": "anthropic.claude-sonnet-4-20250514-v1:0" },
@@ -45,11 +45,11 @@
   },
 
   "aws_cli_examples": {
-    "put_default": "aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '{\"configId\":{\"S\":\"default\"},\"modelId\":{\"S\":\"anthropic.claude-sonnet-4-20250514-v1:0\"},\"temperature\":{\"N\":\"0.7\"},\"maxTokens\":{\"N\":\"1024\"},\"topP\":{\"N\":\"1.0\"},\"promptCaching\":{\"BOOL\":true}}'",
-    "put_voice_prod": "aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '{\"configId\":{\"S\":\"voice-prod\"},\"temperature\":{\"N\":\"0.3\"},\"maxTokens\":{\"N\":\"2048\"}}'",
-    "put_chat": "aws dynamodb put-item --table-name cali-prod-ai-connector-config --item '{\"configId\":{\"S\":\"chat\"},\"temperature\":{\"N\":\"0.9\"},\"maxTokens\":{\"N\":\"4096\"},\"topP\":{\"N\":\"0.95\"}}'",
-    "read_config": "aws dynamodb get-item --table-name cali-prod-ai-connector-config --key '{\"configId\":{\"S\":\"default\"}}'",
-    "delete_config": "aws dynamodb delete-item --table-name cali-prod-ai-connector-config --key '{\"configId\":{\"S\":\"voice-test\"}}'"
+    "put_default": "aws dynamodb put-item --table-name prod-ai-connector-config --item '{\"configId\":{\"S\":\"default\"},\"modelId\":{\"S\":\"anthropic.claude-sonnet-4-20250514-v1:0\"},\"temperature\":{\"N\":\"0.7\"},\"maxTokens\":{\"N\":\"1024\"},\"topP\":{\"N\":\"1.0\"},\"promptCaching\":{\"BOOL\":true}}'",
+    "put_voice_prod": "aws dynamodb put-item --table-name prod-ai-connector-config --item '{\"configId\":{\"S\":\"voice-prod\"},\"temperature\":{\"N\":\"0.3\"},\"maxTokens\":{\"N\":\"2048\"}}'",
+    "put_chat": "aws dynamodb put-item --table-name prod-ai-connector-config --item '{\"configId\":{\"S\":\"chat\"},\"temperature\":{\"N\":\"0.9\"},\"maxTokens\":{\"N\":\"4096\"},\"topP\":{\"N\":\"0.95\"}}'",
+    "read_config": "aws dynamodb get-item --table-name prod-ai-connector-config --key '{\"configId\":{\"S\":\"default\"}}'",
+    "delete_config": "aws dynamodb delete-item --table-name prod-ai-connector-config --key '{\"configId\":{\"S\":\"voice-test\"}}'"
   },
 
   "resolution_example": {

@@ -3,13 +3,12 @@
 /**
  * Seed AI Connector configs to DynamoDB from the configs/ folder.
  *
- * Reads every .json file in ../configs/, then PutItem (upsert) each
- * into the cali-{ENV_NAME}-ai-connector-config table.
+ * Reads every .json file in configs/, then PutItem (upsert) each
+ * into the {AI_CONNECTOR_ENV_NAME}-ai-connector-config table.
  *
  * Usage:
- *   node scripts/seed-configs.js                     # uses ENV_NAME from env
- *   ENV_NAME=dev node scripts/seed-configs.js
- *   ENV_NAME=dev AWS_REGION=eu-central-1 node scripts/seed-configs.js
+ *   AI_CONNECTOR_ENV_NAME=dev node scripts/seed-configs.js
+ *   AI_CONNECTOR_ENV_NAME=prod AI_CONNECTOR_AWS_REGION=eu-central-1 node scripts/seed-configs.js
  */
 
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
@@ -17,15 +16,15 @@ const { DynamoDBDocumentClient, PutCommand } = require("@aws-sdk/lib-dynamodb");
 const fs = require("fs");
 const path = require("path");
 
-const ENV_NAME = process.env.ENV_NAME;
+const ENV_NAME = process.env.AI_CONNECTOR_ENV_NAME;
 if (!ENV_NAME) {
-  console.error("ENV_NAME environment variable is required (e.g. dev, preprod, prod)");
+  console.error("AI_CONNECTOR_ENV_NAME environment variable is required (e.g. dev, staging, prod)");
   process.exit(1);
 }
 
-const TABLE_NAME = `cali-${ENV_NAME}-ai-connector-config`;
+const TABLE_NAME = `${ENV_NAME}-ai-connector-config`;
 const CONFIGS_DIR = path.resolve(__dirname, "..", "configs");
-const REGION = process.env.AWS_REGION || process.env.DEFAULT_REGION || "eu-central-1";
+const REGION = process.env.AI_CONNECTOR_AWS_REGION || process.env.AWS_REGION || "eu-central-1";
 
 const docClient = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: REGION })
